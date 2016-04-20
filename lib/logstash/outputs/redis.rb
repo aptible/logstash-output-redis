@@ -53,15 +53,18 @@ class LogStash::Outputs::Redis < LogStash::Outputs::Base
   # TODO: delete
   config :queue, :validate => :string, :deprecated => true
 
-  # The name of a Redis list or channel. Dynamic names are
+  # The name of a Redis list or channel or script sha. Dynamic names are
   # valid here, for example `logstash-%{type}`.
   # TODO set required true
   config :key, :validate => :string, :required => false
 
-  # Either list or channel.  If `redis_type` is list, then we will set
+  # Either list or channel or script.  If `redis_type` is list, then we will set
   # RPUSH to key. If `redis_type` is channel, then we will PUBLISH to `key`.
+  # If `redis_type` is script, then we'll EVALSHA on key with 0 keys (the
+  # message is submitted as a positional argument).
   # TODO set required true
-  config :data_type, :validate => [ "list", "channel" ], :required => false
+  config :data_type, :validate => [ "list", "channel", "script"],
+                     :required => false
 
   # Set to true if you want Redis to batch up values and send 1 RPUSH command
   # instead of one command per value to push on the list.  Note that this only
@@ -167,8 +170,12 @@ class LogStash::Outputs::Redis < LogStash::Outputs::Base
       if @data_type == 'list'
         congestion_check(key)
         @redis.rpush(key, payload)
-      else
+      elsif @data_type == 'channel'
         @redis.publish(key, payload)
+      elsif @data_type == 'script'
+        @redis.evalsha(key, :argv => [payload])
+      else
+        raise RuntimeError.new("Unknown data_type: #{@data_type}")
       end
     rescue => e
       @logger.warn("Failed to send event to Redis", :event => event,
@@ -247,5 +254,4 @@ class LogStash::Outputs::Redis < LogStash::Outputs::Base
   def identity
     @name || "redis://#{@password}@#{@current_host}:#{@current_port}/#{@db} #{@data_type}:#{@key}"
   end
-
 end
