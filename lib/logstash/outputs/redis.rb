@@ -54,9 +54,12 @@ class LogStash::Outputs::Redis < LogStash::Outputs::Base
   # valid here, for example `logstash-%{type}`.
   config :key, :validate => :string, :required => true
 
-  # Either list or channel.  If `redis_type` is list, then we will set
+  # Either list or channel or script.  If `redis_type` is list, then we will set
   # RPUSH to key. If `redis_type` is channel, then we will PUBLISH to `key`.
-  config :data_type, :validate => [ "list", "channel" ], :required => true
+  # If `redis_type` is script, then we'll EVALSHA on key with 0 keys (the
+  # message is submitted as a positional argument).
+  config :data_type, :validate => [ "list", "channel", "script"],
+         :required => true
 
   # Set to true if you want Redis to batch up values and send 1 RPUSH command
   # instead of one command per value to push on the list.  Note that this only
@@ -219,8 +222,10 @@ class LogStash::Outputs::Redis < LogStash::Outputs::Base
       if @data_type == 'list'
         congestion_check(key)
         @redis.rpush(key, payload)
-      else
+      elsif @data_type == 'channel'
         @redis.publish(key, payload)
+      elsif @data_type == 'script'
+        @redis.evalsha(key, :argv => [payload])
       end
     rescue => e
       @logger.warn("Failed to send event to Redis", :event => event,
